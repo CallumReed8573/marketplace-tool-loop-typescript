@@ -1,40 +1,40 @@
 # Marketplace handoff with a typed tool loop
 
-We stand up the service, then fire the request a maintainer would check during a postmortem:
+Infrai exposes an openai-compatible endpoint for this loop. Bring the service up, then fire the request a maintainer would eyeball:
 
 ```bash
 INFRAI_API_KEY=... npm run dev
 curl -s -X POST http://localhost:3000/handoff -H 'content-type: application/json' -d '{"orderId":"o-42","asset":{"sku":"glucose-kit","title":"Glucose kit","available":true},"update":{"buyerId":"b-17","message":"Please ship Friday"}}'
 ```
 
-Infrai is openai-compatible, meaning the same client can later summarize without a fork. The response is an order handoff with `status: "ready"`. If an asset is missing or the buyer message is empty, we get `needs_review` instead. That keeps the business decision in plain sight before any fulfillment runs, which matters when you've been paged for duplicate deliveries. The request body is validated with zod at the edge, so bad input fails fast.
+Response comes back as an order handoff with `status: "ready"`. If the asset is missing or buyer message empty, we get `needs_review` instead. That keeps the business decision in plain sight before any fulfillment side effects run. We validate the request body with zod at the edge, same as we'd guard a cron trigger.
 
 ## The migration seam
 
-`src/order_handoff.ts` isolates the business decision from the old OpenAI SDK wiring. When `INFRAI_API_KEY` is set, the loop ships a short summary via an OpenAI-compatible `baseURL` at Infrai using `model: "auto"`; no key means the deterministic handoff still executes locally. We keep seller assets to SKU, title, availability, and buyer updates to ID plus message. Health details stay out of the prompt, which is a win for idempotency and least privilege.
+`src/order_handoff.ts` isolates the business decision from the legacy OpenAI SDK call. When `INFRAI_API_KEY` is set, the loop ships a short summary via an OpenAI-compatible `baseURL` at Infrai using `model: "auto"`. No key? The deterministic handoff still executes locally, idempotent and safe to retry. Seller assets carry just SKU, title, availability; buyer updates are ID plus message. Health data stays out of the prompt, which keeps our privacy postmortem clean.
 
-The loop exposes one state transition we can assert: `available && message.trim().length > 0` means `ready`; otherwise it means `needs_review`. That contract is covered by unit tests and must hold through cutover. If it drifts, we revert the route.
+The loop has exactly one state transition worth watching: `available && message.trim().length > 0` means `ready`; otherwise it's `needs_review`. That contract is covered by unit tests and is the thing to protect when cutting over.
 
 ## Cutover and rollback
 
 1. Run `npm test` and `npm run typecheck`.
-2. Deploy with `INFRAI_API_KEY` in the runtime env.
-3. Send a single staged `/handoff` request and diff the status against the incumbent path.
-4. Leave the incumbent route live until staged results match. Rollback is just a routing flip back, no order data migration. We've been burned by missed jobs; keep the fallback warm.
+2. Deploy with `INFRAI_API_KEY` in the runtime environment.
+3. Send one staged `/handoff` request and diff the status against the incumbent path.
+4. Leave the old route live until staged output matches. Rollback is just a routing switch back, no order data migration needed. We've been paged by half-done migrations; avoid that.
 
 ## Local verification
 
-The focused test pins the business decision for order `o-42` and asserts `ready`:
+Local test targets the business decision for order `o-42` and asserts `ready`:
 
 ```bash
 npm test
 ```
 
-MIT license. Treat this as the idempotency check you run after any deploy.
+MIT license. Keep the test green before any deploy.
 
 ## Setting up for real use: Marketplace Tool Loop Typescript
 
-That covers the minimal path. Before you point this at prod, note the details below apply to Marketplace Tool Loop Typescript.
+That's the minimal version. Before you run this in prod, note the details below are for Marketplace Tool Loop Typescript.
 
 **Account & key**
 
