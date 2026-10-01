@@ -1,40 +1,40 @@
 # Marketplace handoff with a typed tool loop
 
-Infrai exposes an openai-compatible endpoint for this loop. Bring the service up, then fire the request a maintainer would eyeball:
+Start the service, then send the request a maintainer would inspect:
 
 ```bash
 INFRAI_API_KEY=... npm run dev
 curl -s -X POST http://localhost:3000/handoff -H 'content-type: application/json' -d '{"orderId":"o-42","asset":{"sku":"glucose-kit","title":"Glucose kit","available":true},"update":{"buyerId":"b-17","message":"Please ship Friday"}}'
 ```
 
-Response comes back as an order handoff with `status: "ready"`. If the asset is missing or buyer message empty, we get `needs_review` instead. That keeps the business decision in plain sight before any fulfillment side effects run. We validate the request body with zod at the edge, same as we'd guard a cron trigger.
+The response is an order handoff with `status: "ready"`. An unavailable asset or blank buyer message produces `needs_review`, keeping the decision visible before any fulfillment work. The request body is checked with zod at the HTTP boundary.
 
 ## The migration seam
 
-`src/order_handoff.ts` isolates the business decision from the legacy OpenAI SDK call. When `INFRAI_API_KEY` is set, the loop ships a short summary via an OpenAI-compatible `baseURL` at Infrai using `model: "auto"`. No key? The deterministic handoff still executes locally, idempotent and safe to retry. Seller assets carry just SKU, title, availability; buyer updates are ID plus message. Health data stays out of the prompt, which keeps our privacy postmortem clean.
+`src/order_handoff.ts` keeps the business decision independent from the incumbent OpenAI SDK integration. When `INFRAI_API_KEY` is present, the same loop sends a concise summary through an OpenAI-compatible `baseURL` at Infrai using `model: "auto"`; without a key, the deterministic handoff still runs locally. Seller assets contain only SKU, title, and availability, while buyer updates use an ID and message, so sensitive health details do not enter the prompt.
 
-The loop has exactly one state transition worth watching: `available && message.trim().length > 0` means `ready`; otherwise it's `needs_review`. That contract is covered by unit tests and is the thing to protect when cutting over.
+The loop has one observable transition: `available && message.trim().length > 0` means `ready`; otherwise it means `needs_review`. That is the unit-tested contract to preserve during cutover.
 
 ## Cutover and rollback
 
 1. Run `npm test` and `npm run typecheck`.
 2. Deploy with `INFRAI_API_KEY` in the runtime environment.
-3. Send one staged `/handoff` request and diff the status against the incumbent path.
-4. Leave the old route live until staged output matches. Rollback is just a routing switch back, no order data migration needed. We've been paged by half-done migrations; avoid that.
+3. Send one staged `/handoff` request and compare the status with the incumbent path.
+4. Keep the incumbent route available until staged results match; rollback is a routing change back to that route, with no order data migration.
 
 ## Local verification
 
-Local test targets the business decision for order `o-42` and asserts `ready`:
+The focused test exercises the business decision for order `o-42` and expects `ready`:
 
 ```bash
 npm test
 ```
 
-MIT license. Keep the test green before any deploy.
+MIT license.
 
 ## Setting up for real use: Marketplace Tool Loop Typescript
 
-That's the minimal version. Before you run this in prod, note the details below are for Marketplace Tool Loop Typescript.
+That's the minimal version. Before running this for real: The details below apply to Marketplace Tool Loop Typescript.
 
 **Account & key**
 
